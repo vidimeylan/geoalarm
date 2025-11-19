@@ -5,9 +5,12 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart'; // Package untuk membuat ID unik
 import '../models/alarm.dart';
+import '../services/auth_service.dart';
 
 class AlarmHomepageScreen extends StatefulWidget {
-  const AlarmHomepageScreen({super.key});
+  final Future<void> Function()? onLogout;
+
+  const AlarmHomepageScreen({super.key, this.onLogout});
 
   @override
   State<AlarmHomepageScreen> createState() => _AlarmHomepageScreenState();
@@ -69,6 +72,13 @@ class _AlarmHomepageScreenState extends State<AlarmHomepageScreen> {
     _saveAlarms(); // Simpan setiap kali status alarm diubah
   }
 
+  Future<void> _logout() async {
+    await AuthService().logout();
+    if (widget.onLogout != null) {
+      widget.onLogout!();
+    }
+  }
+
   @override
   void dispose() {
     _timer.cancel();
@@ -83,6 +93,14 @@ class _AlarmHomepageScreenState extends State<AlarmHomepageScreen> {
         title: const Text('Alarm', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         backgroundColor: Colors.black,
         elevation: 0,
+        actions: [
+          if (widget.onLogout != null)
+            IconButton(
+              onPressed: _logout,
+              icon: const Icon(Icons.logout, color: Colors.white),
+              tooltip: 'Keluar',
+            ),
+        ],
       ),
       body: Column(
         children: [
