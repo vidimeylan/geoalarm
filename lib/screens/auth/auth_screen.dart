@@ -95,7 +95,6 @@ class AuthScreen extends StatelessWidget {
             RegisterForm(),
           ],
         ),
-        bottomNavigationBar: const _AuthActions(),
       ),
     );
   }
@@ -184,9 +183,6 @@ class _LoginFormState extends State<LoginForm> {
                         suffixIcon: IconButton(
                           icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
                           onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
-                          iconSize: 20, // Smaller icon size
-                          padding: EdgeInsets.zero, // Remove padding
-                          constraints: const BoxConstraints(), // Remove constraints
                         ),
                       ),
                       obscureText: _obscurePassword,
@@ -222,11 +218,8 @@ class _LoginFormState extends State<LoginForm> {
                                 width: 16,
                                 child: CircularProgressIndicator(strokeWidth: 2),
                               )
-                            : const Icon(Icons.login, size: 18), // Smaller icon
-                        label: const Text('Masuk dengan Google', style: TextStyle(fontSize: 14)), // Smaller text
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), // Smaller padding
-                        ),
+                            : const Icon(Icons.login),
+                        label: const Text('Masuk dengan Google'),
                       ),
                     ),
                     const SizedBox(height: 16),
@@ -463,9 +456,6 @@ class _RegisterFormState extends State<RegisterForm> {
                   suffixIcon: IconButton(
                     icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
                     onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
-                    iconSize: 20, // Smaller icon size
-                    padding: EdgeInsets.zero, // Remove padding
-                    constraints: const BoxConstraints(), // Remove constraints
                   ),
                 ),
                 obscureText: _obscurePassword,
@@ -562,25 +552,6 @@ class _RegisterFormState extends State<RegisterForm> {
                 ),
               ],
             ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _AuthActions extends StatelessWidget {
-  const _AuthActions();
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(12.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: const [
-            Divider(height: 12),
           ],
         ),
       ),

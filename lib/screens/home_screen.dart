@@ -37,74 +37,48 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Colors.blue, Colors.blueAccent],
-          ),
-        ),
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(20.0),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const SizedBox(height: 40),
-                const Icon(
-                  Icons.home,
-                  size: 80,
-                  color: Colors.white,
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20.0),
+          child: Column(
+            children: [
+              const SizedBox(height: 20),
+              const Text(
+                'Selamat Datang!',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
                 ),
-                const SizedBox(height: 20),
-                const Text(
-                  'Selamat Datang!',
-                  style: TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                  ),
-                  textAlign: TextAlign.center,
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Pilih menu yang ingin Anda akses',
+                style: TextStyle(
+                  fontSize: 16,
+                  color: Colors.grey[600],
                 ),
-                const SizedBox(height: 10),
-                const Text(
-                  'Pilih menu yang ingin Anda akses',
-                  style: TextStyle(
-                    fontSize: 16,
-                    color: Colors.white70,
-                  ),
-                  textAlign: TextAlign.center,
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 40),
+              _buildMenuButton(
+                icon: Icons.alarm,
+                title: 'Alarm Lokasi',
+                subtitle: 'Kelola alarm berbasis lokasi',
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const AlarmSection()),
                 ),
-                const SizedBox(height: 60),
-                _buildMenuButton(
-                  icon: Icons.alarm,
-                  title: 'Alarm Lokasi',
-                  subtitle: 'Kelola alarm berbasis lokasi',
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const AlarmSection()),
-                  ),
+              ),
+              const SizedBox(height: 16),
+              _buildMenuButton(
+                icon: Icons.article,
+                title: 'Berita Transportasi',
+                subtitle: 'Baca berita terbaru transportasi',
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const NewsScreen()),
                 ),
-                const SizedBox(height: 20),
-                _buildMenuButton(
-                  icon: Icons.article,
-                  title: 'Berita Transportasi',
-                  subtitle: 'Baca berita terbaru transportasi',
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const NewsScreen()),
-                  ),
-                ),
-                const Spacer(),
-                const Text(
-                  'Siaga Turun - Alarm Lokasi Pintar',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.white60,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
@@ -118,59 +92,13 @@ class _HomeScreenState extends State<HomeScreen> {
     required VoidCallback onTap,
   }) {
     return Card(
-      elevation: 8,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: InkWell(
+      elevation: 2,
+      child: ListTile(
+        leading: Icon(icon, color: Theme.of(context).primaryColor),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+        subtitle: Text(subtitle),
+        trailing: const Icon(Icons.arrow_forward_ios, size: 16),
         onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).primaryColor.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  icon,
-                  size: 32,
-                  color: Theme.of(context).primaryColor,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey[600],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Icon(
-                Icons.arrow_forward_ios,
-                color: Colors.grey[400],
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }
@@ -332,13 +260,13 @@ class _AlarmSectionState extends State<AlarmSection> with WidgetsBindingObserver
 
   Widget _buildDigitalClock() {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 40.0, horizontal: 20.0),
+      padding: const EdgeInsets.symmetric(vertical: 20.0, horizontal: 20.0),
       child: Column(
         children: [
           Text(DateFormat('HH:mm').format(_currentTime),
-            style: const TextStyle(color: Colors.white, fontSize: 72, fontWeight: FontWeight.bold)),
+            style: const TextStyle(color: Colors.white, fontSize: 48, fontWeight: FontWeight.bold)),
           Text(DateFormat('E, d MMM').format(_currentTime),
-            style: TextStyle(color: Colors.grey[400], fontSize: 18)),
+            style: TextStyle(color: Colors.grey[400], fontSize: 16)),
         ],
       ),
     );
@@ -384,12 +312,12 @@ class _AlarmSectionState extends State<AlarmSection> with WidgetsBindingObserver
               children: [
                 const SizedBox(height: 4),
                 Text(
-                  '📅 $createdStr',
+                  'Dibuat: $createdStr',
                   style: TextStyle(color: Colors.grey[400], fontSize: 12),
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  '📍 Radius: ${alarm.radius} m',
+                  'Radius: ${alarm.radius} m',
                   style: TextStyle(color: Colors.grey[400], fontSize: 12),
                 ),
               ],
