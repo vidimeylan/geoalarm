@@ -110,6 +110,7 @@ class _LoginFormState extends State<LoginForm> {
   final _passwordController = TextEditingController();
   bool _loading = false;
   bool _loadingGoogle = false;
+  bool _obscurePassword = true;
 
   @override
   void dispose() {
@@ -141,76 +142,105 @@ class _LoginFormState extends State<LoginForm> {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.all(16.0),
-      child: Form(
-        key: _formKey,
-        child: Card(
-          color: Theme.of(context).colorScheme.surfaceVariant,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Masuk',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+      child: SingleChildScrollView(
+        child: Form(
+          key: _formKey,
+          child: Container(
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width - 32, // Account for padding
+            ),
+            child: Card(
+              color: Theme.of(context).colorScheme.surfaceVariant,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Masuk',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: _usernameController,
+                      decoration: const InputDecoration(
+                        labelText: 'Username',
+                      ),
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Username wajib diisi';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: _passwordController,
+                      decoration: InputDecoration(
+                        labelText: 'Password',
+                        suffixIcon: IconButton(
+                          icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
+                          onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                          iconSize: 20, // Smaller icon size
+                          padding: EdgeInsets.zero, // Remove padding
+                          constraints: const BoxConstraints(), // Remove constraints
+                        ),
+                      ),
+                      obscureText: _obscurePassword,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Password wajib diisi';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 20),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: _loading ? null : _submit,
+                        child: _loading
+                            ? const SizedBox(
+                                height: 20,
+                                width: 20,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Text('Masuk'),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: (_loading || _loadingGoogle) ? null : _loginWithGoogle,
+                        icon: _loadingGoogle
+                            ? const SizedBox(
+                                height: 16,
+                                width: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.login, size: 18), // Smaller icon
+                        label: const Text('Masuk dengan Google', style: TextStyle(fontSize: 14)), // Smaller text
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), // Smaller padding
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(builder: (_) => const ResetFlowScreen()),
+                          );
+                        },
+                        child: const Text('Lupa password?'),
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _usernameController,
-                  decoration: const InputDecoration(
-                    labelText: 'Username',
-                  ),
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Username wajib diisi';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _passwordController,
-                  decoration: const InputDecoration(
-                    labelText: 'Password',
-                  ),
-                  obscureText: true,
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Password wajib diisi';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 20),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: _loading ? null : _submit,
-                    child: _loading
-                        ? const SizedBox(
-                            height: 20,
-                            width: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('Masuk'),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: (_loading || _loadingGoogle) ? null : _loginWithGoogle,
-                    icon: _loadingGoogle
-                        ? const SizedBox(
-                            height: 18,
-                            width: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.login),
-                    label: const Text('Masuk dengan Google'),
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
         ),
@@ -277,6 +307,7 @@ class _RegisterFormState extends State<RegisterForm> {
   _RegisterStep _step = _RegisterStep.form;
   int _countdown = 0;
   Timer? _timer;
+  bool _obscurePassword = true;
 
   @override
   void dispose() {
@@ -366,25 +397,20 @@ class _RegisterFormState extends State<RegisterForm> {
       child: SingleChildScrollView(
         child: Form(
           key: _formKey,
-          child: Column(
-            children: [
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 250),
-                child: _step == _RegisterStep.form
-                    ? _buildForm(cardColor)
-                    : _buildOtp(cardColor),
-              ),
-              if (_step == _RegisterStep.otp)
-                TextButton.icon(
-                  onPressed: _loading
-                      ? null
-                      : () {
-                          setState(() => _step = _RegisterStep.form);
-                        },
-                  icon: const Icon(Icons.arrow_back),
-                  label: const Text('Ubah data pendaftaran'),
+          child: Container(
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width - 32, // Account for padding
+            ),
+            child: Column(
+              children: [
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 250),
+                  child: _step == _RegisterStep.form
+                      ? _buildForm(cardColor)
+                      : _buildOtp(cardColor),
                 ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -433,8 +459,17 @@ class _RegisterFormState extends State<RegisterForm> {
             const SizedBox(height: 12),
             TextFormField(
               controller: _passwordController,
-              decoration: const InputDecoration(labelText: 'Password'),
-              obscureText: true,
+              decoration: InputDecoration(
+                labelText: 'Password',
+                suffixIcon: IconButton(
+                  icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
+                  onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                  iconSize: 20, // Smaller icon size
+                  padding: EdgeInsets.zero, // Remove padding
+                  constraints: const BoxConstraints(), // Remove constraints
+                ),
+              ),
+              obscureText: _obscurePassword,
               validator: (value) {
                 if (value == null || value.isEmpty) return 'Password wajib diisi';
                 if (value.length < 6) return 'Minimal 6 karakter';
@@ -544,22 +579,8 @@ class _AuthActions extends StatelessWidget {
         padding: const EdgeInsets.all(12.0),
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          children: [
-            const Divider(height: 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.start,
-              children: [
-                TextButton.icon(
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const ResetFlowScreen()),
-                    );
-                  },
-                  icon: const Icon(Icons.lock_reset),
-                  label: const Text('Lupa password?'),
-                ),
-              ],
-            ),
+          children: const [
+            Divider(height: 12),
           ],
         ),
       ),
@@ -846,6 +867,8 @@ class _ResetFlowScreenState extends State<ResetFlowScreen> {
   bool _loading = false;
   int _countdown = 0;
   Timer? _timer;
+  bool _obscureNewPassword = true;
+  bool _obscureConfirmPassword = true;
 
   @override
   void dispose() {
@@ -1053,16 +1076,6 @@ class _ResetFlowScreenState extends State<ResetFlowScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                TextButton.icon(
-                  onPressed: _loading
-                      ? null
-                      : () {
-                          setState(() => _step = _ResetStep.email);
-                        },
-                  icon: const Icon(Icons.arrow_back),
-                  label: const Text('Ubah email'),
-                ),
               ],
             ),
           ),
@@ -1079,14 +1092,27 @@ class _ResetFlowScreenState extends State<ResetFlowScreen> {
                 const SizedBox(height: 12),
                 TextField(
                   controller: _passController,
-                  decoration: const InputDecoration(labelText: 'Password baru'),
-                  obscureText: true,
+                  decoration: InputDecoration(
+                    labelText: 'Password baru',
+                    suffixIcon: IconButton(
+                      icon: Icon(_obscureNewPassword ? Icons.visibility_off : Icons.visibility),
+                      onPressed: () => setState(() => _obscureNewPassword = !_obscureNewPassword),
+                    ),
+                  ),
+                  obscureText: _obscureNewPassword,
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: _confirmController,
-                  decoration: const InputDecoration(labelText: 'Konfirmasi password'),
-                  obscureText: true,
+                  decoration: InputDecoration(
+                    labelText: 'Konfirmasi password',
+                    suffixIcon: IconButton(
+                      icon: Icon(_obscureConfirmPassword ? Icons.visibility_off : Icons.visibility),
+                      onPressed: () =>
+                          setState(() => _obscureConfirmPassword = !_obscureConfirmPassword),
+                    ),
+                  ),
+                  obscureText: _obscureConfirmPassword,
                 ),
                 const SizedBox(height: 16),
                 SizedBox(

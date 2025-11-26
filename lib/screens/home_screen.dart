@@ -1,11 +1,11 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:uuid/uuid.dart'; // Package untuk membuat ID unik
 import '../models/alarm.dart';
 import '../services/auth_service.dart';
+import '../services/alarm_api_service.dart';
+import 'alarm/alarm_form_screen.dart';
+import '../services/geofence_service.dart';
 
 class AlarmHomepageScreen extends StatefulWidget {
   final Future<void> Function()? onLogout;
@@ -16,17 +16,21 @@ class AlarmHomepageScreen extends StatefulWidget {
   State<AlarmHomepageScreen> createState() => _AlarmHomepageScreenState();
 }
 
-class _AlarmHomepageScreenState extends State<AlarmHomepageScreen> {
+class _AlarmHomepageScreenState extends State<AlarmHomepageScreen> with WidgetsBindingObserver {
   late Timer _timer;
   late DateTime _currentTime;
   List<Alarm> _alarms = [];
-  final Uuid _uuid = Uuid(); // Inisialisasi Uuid
+  final AlarmApiService _api = AlarmApiService();
+  bool _loading = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _currentTime = DateTime.now();
-    _loadAlarms(); // Muat data alarm saat aplikasi dimulai
+    _loadAlarms(); // Muat data alarm dari API saat aplikasi dimulai
+    // Mulai monitoring geofence saat layar alarm aktif
+    GeofenceService().startMonitoring();
 
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (mounted) {
@@ -35,41 +39,73 @@ class _AlarmHomepageScreenState extends State<AlarmHomepageScreen> {
     });
   }
   
-  // --- Fungsi untuk Load, Save, dan Update Alarm ---
-
-  Future<void> _loadAlarms() async {
-    final prefs = await SharedPreferences.getInstance();
-    final String? alarmsString = prefs.getString('alarms');
-    if (alarmsString != null) {
-      final List<dynamic> alarmJson = jsonDecode(alarmsString);
-      setState(() {
-        _alarms = alarmJson.map((json) => Alarm.fromMap(json)).toList();
-      });
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed) {
+      // Refresh alarms when app resumes (e.g., after dismissing alarm)
+      _loadAlarms();
     }
   }
 
-  Future<void> _saveAlarms() async {
-    final prefs = await SharedPreferences.getInstance();
-    final String alarmsString = jsonEncode(_alarms.map((alarm) => alarm.toMap()).toList());
-    await prefs.setString('alarms', alarmsString);
+  Future<void> _loadAlarms() async {
+    setState(() => _loading = true);
+    try {
+      final list = await _api.fetchAlarms();
+      if (mounted) setState(() => _alarms = list);
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Gagal memuat alarm: $e')));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
-  void _addAlarm() {
-    // Contoh menambah alarm baru berdasarkan WAKTU
-    final newAlarm = Alarm(
-      id: _uuid.v4(), // Buat ID unik
-      type: AlarmType.time,
-      label: 'Alarm Baru',
-      time: '10:00',
-      isActive: true,
+  Future<void> _addAlarm() async {
+    final created = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => const AlarmFormScreen()),
     );
-    setState(() => _alarms.add(newAlarm));
-    _saveAlarms(); // Simpan setiap kali ada alarm baru
+    if (created == true) {
+      await _loadAlarms();
+    }
   }
-  
-  void _toggleAlarm(int index, bool value) {
-    setState(() => _alarms[index].isActive = value);
-    _saveAlarms(); // Simpan setiap kali status alarm diubah
+
+  Future<void> _editAlarm(Alarm alarm) async {
+    final updated = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => AlarmFormScreen(alarm: alarm)),
+    );
+    if (updated == true) await _loadAlarms();
+  }
+
+  Future<void> _toggleAlarm(int index, bool value) async {
+    final alarm = _alarms[index];
+    try {
+      await _api.toggleActive(alarm.id, value);
+      setState(() => _alarms[index].isActive = value);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Gagal toggle: $e')));
+    }
+  }
+
+  Future<void> _deleteAlarm(int index) async {
+    final alarm = _alarms[index];
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Konfirmasi'),
+        content: const Text('Hapus alarm ini?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Batal')),
+          TextButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Hapus')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await _api.deleteAlarm(alarm.id);
+      if (mounted) setState(() => _alarms.removeAt(index));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Gagal hapus: $e')));
+    }
   }
 
   Future<void> _logout() async {
@@ -81,7 +117,9 @@ class _AlarmHomepageScreenState extends State<AlarmHomepageScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer.cancel();
+    GeofenceService().stopMonitoring();
     super.dispose();
   }
 
@@ -105,7 +143,9 @@ class _AlarmHomepageScreenState extends State<AlarmHomepageScreen> {
       body: Column(
         children: [
           _buildDigitalClock(),
-          _buildAlarmList(),
+          _loading
+              ? const Expanded(child: Center(child: CircularProgressIndicator()))
+              : _buildAlarmList(),
         ],
       ),
       floatingActionButton: FloatingActionButton(
@@ -133,34 +173,73 @@ class _AlarmHomepageScreenState extends State<AlarmHomepageScreen> {
 
   Widget _buildAlarmList() {
     return Expanded(
-      child: ListView.separated(
-        itemCount: _alarms.length,
-        separatorBuilder: (context, index) => Divider(color: Colors.grey[800], indent: 20, endIndent: 20),
-        itemBuilder: (context, index) {
+      child: RefreshIndicator(
+        onRefresh: _loadAlarms,
+        child: _alarms.isEmpty
+            ? ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: [
+                  SizedBox(height: 80),
+                  Center(child: Text('Tidak ada alarm', style: TextStyle(color: Colors.grey[400]))),
+                ],
+              )
+            : ListView.separated(
+                itemCount: _alarms.length,
+                separatorBuilder: (context, index) => Divider(color: Colors.grey[800], indent: 20, endIndent: 20),
+                itemBuilder: (context, index) {
           final alarm = _alarms[index];
-          // Tentukan ikon dan teks berdasarkan jenis alarm
-          final IconData icon = alarm.type == AlarmType.time ? Icons.access_time : Icons.location_on;
-          final String title = alarm.type == AlarmType.time ? alarm.time : 'Lokasi';
+          final createdStr = alarm.createdDate != null
+              ? DateFormat('d MMM yyyy, HH:mm').format(alarm.createdDate!)
+              : 'Tanggal tidak diketahui';
           
           return ListTile(
-            leading: Icon(icon, color: alarm.isActive ? Colors.white : Colors.grey, size: 28),
-            title: Text(title,
+            onTap: () => _editAlarm(alarm),
+            leading: Icon(Icons.location_on, color: alarm.isActive ? Colors.white : Colors.grey, size: 28),
+            title: Text(
+              alarm.label,
               style: TextStyle(
                 color: alarm.isActive ? Colors.white : Colors.grey,
-                fontSize: 32,
+                fontSize: 18,
                 fontWeight: FontWeight.w500,
                 decoration: alarm.isActive ? TextDecoration.none : TextDecoration.lineThrough,
-              )),
-            subtitle: Text(alarm.label,
-              style: TextStyle(color: alarm.isActive ? Colors.white70 : Colors.grey)),
-            trailing: Switch(
-              value: alarm.isActive,
-              onChanged: (bool value) => _toggleAlarm(index, value),
-              activeTrackColor: Colors.blueAccent.withOpacity(0.5),
-              activeColor: Colors.blueAccent,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 4),
+                Text(
+                  '📅 $createdStr',
+                  style: TextStyle(color: Colors.grey[400], fontSize: 12),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '📍 Radius: ${alarm.radius} m',
+                  style: TextStyle(color: Colors.grey[400], fontSize: 12),
+                ),
+              ],
+            ),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Switch(
+                  value: alarm.isActive,
+                  onChanged: (bool value) => _toggleAlarm(index, value),
+                  activeTrackColor: Colors.blueAccent.withOpacity(0.5),
+                  activeColor: Colors.blueAccent,
+                ),
+                IconButton(
+                  onPressed: () => _deleteAlarm(index),
+                  icon: const Icon(Icons.delete, color: Colors.redAccent),
+                  tooltip: 'Hapus alarm',
+                ),
+              ],
             ),
           );
-        },
+                },
+              ),
       ),
     );
   }
