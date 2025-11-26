@@ -60,7 +60,19 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
       setState(() => _searchLoading = true);
       try {
         final results = await _searchLocationOffline(q);
-        if (mounted) setState(() => _suggestions = results);
+        if (mounted) {
+          setState(() => _suggestions = results);
+
+          // Provide feedback for empty results
+          if (results.isEmpty && q.length >= 2) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Tidak ada hasil. Coba nama yang lebih spesifik'),
+                duration: const Duration(seconds: 3),
+              ),
+            );
+          }
+        }
       } catch (e) {
         print('[MapPicker] Search error: $e');
         if (mounted) {
@@ -68,9 +80,8 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
           // Show error to user
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('⚠️ Pencarian gagal: ${_getErrorMessage(e)}'),
+              content: Text('Pencarian gagal: ${_getErrorMessage(e)}'),
               duration: const Duration(seconds: 3),
-              backgroundColor: Colors.orange.shade700,
             ),
           );
         }
@@ -82,17 +93,11 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
 
   String _getErrorMessage(dynamic error) {
     final errorStr = error.toString().toLowerCase();
-    if (errorStr.contains('connection reset')) {
-      return 'Koneksi terputus (coba tap peta manual)';
-    } else if (errorStr.contains('timeout')) {
-      return 'Jaringan lambat/timeout';
-    } else if (errorStr.contains('network')) {
-      return 'Tidak ada koneksi internet';
-    } else if (errorStr.contains('refused')) {
-      return 'Server tidak merespons';
-    } else {
-      return 'Tidak bisa search online (gunakan tap peta)';
-    }
+    if (errorStr.contains('connection reset')) return 'Koneksi terputus';
+    if (errorStr.contains('timeout')) return 'Timeout';
+    if (errorStr.contains('network')) return 'Tidak ada koneksi';
+    if (errorStr.contains('refused')) return 'Server tidak merespons';
+    return 'Gagal mencari lokasi';
   }
 
   // Offline search using local hardcoded locations + Nominatim fallback
@@ -158,30 +163,72 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
   }
 
   Future<List<Map<String, dynamic>>> _searchNominatim(String query) async {
+    if (query.trim().isEmpty) {
+      print('[MapPicker] Empty query provided to Nominatim');
+      return [];
+    }
+
     final url = Uri.parse(
       'https://nominatim.openstreetmap.org/search'
-      '?q=${Uri.encodeComponent(query)}'
+      '?q=${Uri.encodeComponent(query.trim())}'
       '&format=json'
       '&limit=8'
       '&countrycodes=id'
+      '&addressdetails=1'
+      '&bounded=1'
+      '&viewbox=-11.0,6.0,141.0,-11.0' // Indonesia bounds
     );
-    
+
     print('[MapPicker] Nominatim search: $url');
-    
+
     try {
-      final resp = await http.get(url).timeout(const Duration(seconds: 8));
-      
-      if (resp.statusCode == 200) {
-        final List<dynamic> decoded = jsonDecode(resp.body);
+      final client = http.Client();
+      final request = client.get(url, headers: {
+        'User-Agent': 'GeoAlarm/1.0',
+        'Accept': 'application/json',
+      });
+
+      final response = await request.timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final body = response.body.trim();
+        if (body.isEmpty) {
+          print('[MapPicker] Nominatim returned empty response');
+          return [];
+        }
+
+        final List<dynamic> decoded = jsonDecode(body);
         final results = decoded.cast<Map<String, dynamic>>();
-        print('[MapPicker] Got ${results.length} results from Nominatim');
+
+        print('[MapPicker] Got ${results.length} results from Nominatim for "${query}"');
+
+        // Log first result for debugging
+        if (results.isNotEmpty) {
+          print('[MapPicker] First result: ${results.first['display_name']}');
+        }
+
         return results;
+      } else if (response.statusCode == 429) {
+        print('[MapPicker] Nominatim rate limit exceeded');
+        throw Exception('Terlalu banyak permintaan ke server pencarian. Tunggu beberapa saat.');
+      } else if (response.statusCode == 403) {
+        print('[MapPicker] Nominatim access blocked');
+        throw Exception('Akses ke server pencarian diblokir. Coba lagi nanti.');
       } else {
-        print('[MapPicker] Nominatim error status ${resp.statusCode}');
-        return [];
+        print('[MapPicker] Nominatim error status ${response.statusCode}');
+        throw Exception('Server pencarian error (status: ${response.statusCode})');
       }
+    } on TimeoutException {
+      print('[MapPicker] Nominatim timeout');
+      throw Exception('Server pencarian lambat merespons (timeout)');
+    } on http.ClientException catch (e) {
+      print('[MapPicker] Nominatim network error: ${e.message}');
+      throw Exception('Gagal terhubung ke server pencarian: ${e.message}');
+    } on FormatException {
+      print('[MapPicker] Nominatim response format error');
+      throw Exception('Format response server tidak valid');
     } catch (e) {
-      print('[MapPicker] Nominatim request failed: $e');
+      print('[MapPicker] Nominatim unexpected error: $e');
       rethrow;
     }
   }
@@ -235,7 +282,7 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
       final newPos = LatLng(position.latitude, position.longitude);
       setState(() {
         _picked = newPos;
-        _label = '📍 ${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}';
+        _label = 'Lokasi saat ini: ${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}';
       });
 
       // Animate map to current location
@@ -268,7 +315,7 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
                 TextField(
                   controller: _searchCtrl,
                   decoration: InputDecoration(
-                    hintText: 'Cari lokasi (stasiun, terminal, dll)',
+                    hintText: 'Cari lokasi: "Stasiun Gambir", "Monas", "Jakarta Pusat", dll',
                     prefixIcon: const Icon(Icons.search),
                     suffixIcon: _searchLoading ? const SizedBox(width: 24, height: 24, child: Padding(padding: EdgeInsets.all(12.0), child: CircularProgressIndicator(strokeWidth: 2))) : null,
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
@@ -278,7 +325,7 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
                 if (_suggestions.isNotEmpty)
                   Container(
                     margin: const EdgeInsets.only(top: 8),
-                    decoration: BoxDecoration(border: Border.all(color: Colors.grey[300]!), borderRadius: BorderRadius.circular(8)),
+                    decoration: BoxDecoration(border: Border.all(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(8)),
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxHeight: 150),
                       child: ListView.builder(
@@ -294,6 +341,32 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
                           );
                         },
                       ),
+                    ),
+                  )
+                else if (!_searchLoading && _searchCtrl.text.trim().isNotEmpty && _searchCtrl.text.trim().length >= 2)
+                  Container(
+                    margin: const EdgeInsets.only(top: 8),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.grey.shade300),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Tips pencarian:',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '• Gunakan nama spesifik seperti "Stasiun Gambir"\n'
+                          '• Cari landmark seperti "Monas"\n'
+                          '• Atau tap langsung di peta',
+                          style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                        ),
+                      ],
                     ),
                   ),
               ],
@@ -311,7 +384,7 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
                     onTap: (tapPos, point) {
                       setState(() {
                         _picked = point;
-                        _label = '📍 ${point.latitude.toStringAsFixed(4)}, ${point.longitude.toStringAsFixed(4)}';
+                        _label = 'Lokasi dipilih: ${point.latitude.toStringAsFixed(4)}, ${point.longitude.toStringAsFixed(4)}';
                       });
                     },
                   ),

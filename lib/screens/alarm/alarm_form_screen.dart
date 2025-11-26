@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -51,22 +52,114 @@ class _AlarmFormScreenState extends State<AlarmFormScreen> {
     final lat = double.tryParse(_latCtrl.text);
     final lon = double.tryParse(_lonCtrl.text);
     if (lat == null || lon == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Masukkan lat/lon yang valid')));
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Koordinat tidak valid')),
+            );
       return;
     }
+
+    // Validasi range koordinat
+    if (lat < -90 || lat > 90) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Latitude tidak valid')));
+      return;
+    }
+    if (lon < -180 || lon > 180) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Longitude tidak valid')));
+      return;
+    }
+
     setState(() => _loading = true);
+
     try {
-      final url = Uri.parse('https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=$lat&lon=$lon');
-      final resp = await http.get(url, headers: {'User-Agent': 'geoalarm/1.0'});
-      if (resp.statusCode == 200) {
-        final body = jsonDecode(resp.body);
-        final display = body['display_name'] ?? body['name'] ?? '';
-        if (display != null && display.toString().isNotEmpty) {
-          _labelCtrl.text = display.toString();
+      // Timeout untuk mencegah hanging
+      final url = Uri.parse('https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=$lat&lon=$lon&zoom=18&addressdetails=1');
+
+      final client = http.Client();
+      final request = client.get(url, headers: {
+        'User-Agent': 'GeoAlarm/1.0',
+        'Accept': 'application/json',
+      });
+
+      // Timeout 10 detik
+      final response = await request.timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body);
+
+        if (body != null && body is Map) {
+          String locationName = '';
+
+          // Coba ambil nama lokasi dari berbagai field
+          if (body['display_name'] != null && body['display_name'].toString().isNotEmpty) {
+            locationName = body['display_name'].toString();
+          } else if (body['name'] != null && body['name'].toString().isNotEmpty) {
+            locationName = body['name'].toString();
+          } else if (body['address'] != null && body['address'] is Map) {
+            // Coba ambil dari address details
+            final address = body['address'] as Map;
+            final parts = <String>[];
+
+            if (address['village'] != null) parts.add(address['village']);
+            if (address['town'] != null) parts.add(address['town']);
+            if (address['city'] != null) parts.add(address['city']);
+            if (address['state'] != null) parts.add(address['state']);
+            if (address['country'] != null) parts.add(address['country']);
+
+            if (parts.isNotEmpty) {
+              locationName = parts.join(', ');
+            }
+          }
+
+          if (locationName.isNotEmpty) {
+            // Batasi panjang nama lokasi
+            if (locationName.length > 100) {
+              locationName = locationName.substring(0, 97) + '...';
+            }
+
+            setState(() => _labelCtrl.text = locationName);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Lokasi: $locationName')),
+            );
+          } else {
+            // Jika tidak ada nama spesifik, buat nama generik
+            final genericName = 'Lokasi (${lat.toStringAsFixed(4)}, ${lon.toStringAsFixed(4)})';
+            setState(() => _labelCtrl.text = genericName);
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Menggunakan koordinat sebagai nama lokasi')),
+            );
+          }
+        } else {
+          throw Exception('Response format tidak valid');
         }
+      } else if (response.statusCode == 429) {
+        // Rate limit exceeded
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Server sibuk, coba lagi nanti')),
+        );
+      } else {
+        throw Exception('Server error: ${response.statusCode}');
       }
+
+      client.close();
+    } on TimeoutException {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Koneksi timeout')),
+      );
+    } on http.ClientException catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error koneksi: ${e.message}')),
+      );
+    } on FormatException {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Format response tidak valid')),
+      );
     } catch (e) {
-      // ignore
+      // Fallback: buat nama lokasi dari koordinat
+      final fallbackName = 'Lokasi (${lat.toStringAsFixed(4)}, ${lon.toStringAsFixed(4)})';
+      setState(() => _labelCtrl.text = fallbackName);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Gagal mendapatkan nama lokasi')),
+      );
     } finally {
       setState(() => _loading = false);
     }
@@ -163,8 +256,8 @@ class _AlarmFormScreenState extends State<AlarmFormScreen> {
                   Expanded(
                     child: ElevatedButton.icon(
                       onPressed: _loading ? null : _reverseGeocode,
-                      icon: const Icon(Icons.map),
-                      label: const Text('Ambil nama dari OpenStreetMap'),
+                      icon: const Icon(Icons.location_searching),
+                      label: const Text('Deteksi Nama Lokasi'),
                     ),
                   ),
                   const SizedBox(width: 8),
