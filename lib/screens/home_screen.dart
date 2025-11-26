@@ -4,19 +4,186 @@ import 'package:intl/intl.dart';
 import '../models/alarm.dart';
 import '../services/auth_service.dart';
 import '../services/alarm_api_service.dart';
-import 'alarm/alarm_form_screen.dart';
 import '../services/geofence_service.dart';
+import 'alarm/alarm_form_screen.dart';
+import 'news/news_screen.dart';
 
-class AlarmHomepageScreen extends StatefulWidget {
-  final Future<void> Function()? onLogout;
-
-  const AlarmHomepageScreen({super.key, this.onLogout});
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
 
   @override
-  State<AlarmHomepageScreen> createState() => _AlarmHomepageScreenState();
+  State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _AlarmHomepageScreenState extends State<AlarmHomepageScreen> with WidgetsBindingObserver {
+class _HomeScreenState extends State<HomeScreen> {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Siaga Turun', style: TextStyle(fontWeight: FontWeight.bold)),
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        elevation: 0,
+        actions: [
+          IconButton(
+            onPressed: () async {
+              await AuthService().logout();
+              if (mounted) {
+                Navigator.of(context).pushReplacementNamed('/auth');
+              }
+            },
+            icon: const Icon(Icons.logout),
+            tooltip: 'Keluar',
+          ),
+        ],
+      ),
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Colors.blue, Colors.blueAccent],
+          ),
+        ),
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(20.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const SizedBox(height: 40),
+                const Icon(
+                  Icons.home,
+                  size: 80,
+                  color: Colors.white,
+                ),
+                const SizedBox(height: 20),
+                const Text(
+                  'Selamat Datang!',
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'Pilih menu yang ingin Anda akses',
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.white70,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 60),
+                _buildMenuButton(
+                  icon: Icons.alarm,
+                  title: 'Alarm Lokasi',
+                  subtitle: 'Kelola alarm berbasis lokasi',
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const AlarmSection()),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                _buildMenuButton(
+                  icon: Icons.article,
+                  title: 'Berita Transportasi',
+                  subtitle: 'Baca berita terbaru transportasi',
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const NewsScreen()),
+                  ),
+                ),
+                const Spacer(),
+                const Text(
+                  'Siaga Turun - Alarm Lokasi Pintar',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.white60,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMenuButton({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return Card(
+      elevation: 8,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).primaryColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  icon,
+                  size: 32,
+                  color: Theme.of(context).primaryColor,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.arrow_forward_ios,
+                color: Colors.grey[400],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class AlarmSection extends StatefulWidget {
+  const AlarmSection({super.key});
+
+  @override
+  State<AlarmSection> createState() => _AlarmSectionState();
+}
+
+class _AlarmSectionState extends State<AlarmSection> with WidgetsBindingObserver {
   late Timer _timer;
   late DateTime _currentTime;
   List<Alarm> _alarms = [];
@@ -38,7 +205,7 @@ class _AlarmHomepageScreenState extends State<AlarmHomepageScreen> with WidgetsB
       }
     });
   }
-  
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
@@ -66,6 +233,8 @@ class _AlarmHomepageScreenState extends State<AlarmHomepageScreen> with WidgetsB
     );
     if (created == true) {
       await _loadAlarms();
+      // Refresh geofences after adding new alarm
+      await GeofenceService().refreshGeofences();
     }
   }
 
@@ -73,7 +242,11 @@ class _AlarmHomepageScreenState extends State<AlarmHomepageScreen> with WidgetsB
     final updated = await Navigator.of(context).push<bool>(
       MaterialPageRoute(builder: (_) => AlarmFormScreen(alarm: alarm)),
     );
-    if (updated == true) await _loadAlarms();
+    if (updated == true) {
+      await _loadAlarms();
+      // Refresh geofences after editing alarm
+      await GeofenceService().refreshGeofences();
+    }
   }
 
   Future<void> _toggleAlarm(int index, bool value) async {
@@ -81,6 +254,8 @@ class _AlarmHomepageScreenState extends State<AlarmHomepageScreen> with WidgetsB
     try {
       await _api.toggleActive(alarm.id, value);
       setState(() => _alarms[index].isActive = value);
+      // Refresh geofences after toggling alarm
+      await GeofenceService().refreshGeofences();
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Gagal toggle: $e')));
     }
@@ -103,6 +278,8 @@ class _AlarmHomepageScreenState extends State<AlarmHomepageScreen> with WidgetsB
     try {
       await _api.deleteAlarm(alarm.id);
       if (mounted) setState(() => _alarms.removeAt(index));
+      // Refresh geofences after deleting alarm
+      await GeofenceService().refreshGeofences();
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Gagal hapus: $e')));
     }
@@ -110,8 +287,8 @@ class _AlarmHomepageScreenState extends State<AlarmHomepageScreen> with WidgetsB
 
   Future<void> _logout() async {
     await AuthService().logout();
-    if (widget.onLogout != null) {
-      widget.onLogout!();
+    if (mounted) {
+      Navigator.of(context).pushReplacementNamed('/auth');
     }
   }
 
@@ -126,20 +303,16 @@ class _AlarmHomepageScreenState extends State<AlarmHomepageScreen> with WidgetsB
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
       appBar: AppBar(
         title: const Text('Alarm', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         backgroundColor: Colors.black,
         elevation: 0,
-        actions: [
-          if (widget.onLogout != null)
-            IconButton(
-              onPressed: _logout,
-              icon: const Icon(Icons.logout, color: Colors.white),
-              tooltip: 'Keluar',
-            ),
-        ],
+        leading: IconButton(
+          onPressed: () => Navigator.of(context).pop(),
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+        ),
       ),
+      backgroundColor: Colors.black,
       body: Column(
         children: [
           _buildDigitalClock(),

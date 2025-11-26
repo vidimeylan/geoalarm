@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'screens/alarm/alarm_dismissal_screen.dart';
 import 'screens/auth/auth_screen.dart';
+import 'screens/home_screen.dart';
 import 'services/alarm_api_service.dart';
 import 'models/alarm.dart';
 
@@ -50,6 +51,7 @@ class MyApp extends StatelessWidget {
       navigatorKey: navigatorKey,
       home: const AuthGate(),
       routes: {
+        '/auth': (context) => const AuthGate(),
         '/alarm_dismissal': (context) => const AlarmDismissalScreenPlaceholder(),
       },
     );

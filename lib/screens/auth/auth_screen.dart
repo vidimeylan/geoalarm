@@ -21,17 +21,23 @@ class _AuthGateState extends State<AuthGate> {
   @override
   void initState() {
     super.initState();
-    _forceLoginFirst();
+    _checkAuthentication();
   }
 
-  Future<void> _forceLoginFirst() async {
-    // Reset token/local auth setiap app start agar selalu mulai dari login.
-    await AuthService().logout();
-    if (!mounted) return;
-    setState(() {
-      _authenticated = false;
-      _checking = false;
-    });
+  Future<void> _checkAuthentication() async {
+    print('[AuthGate] Checking authentication...');
+    // Check if we have a valid token
+    final token = await AuthService().getValidAccessToken();
+    print('[AuthGate] Token check result: ${token != null ? "valid token found" : "no valid token"}');
+
+    if (token != null) {
+      print('[AuthGate] User authenticated, showing home screen');
+      setState(() => _authenticated = true);
+    } else {
+      print('[AuthGate] User not authenticated, showing login screen');
+      setState(() => _authenticated = false);
+    }
+    setState(() => _checking = false);
   }
 
   void _handleAuthenticated() {
@@ -52,7 +58,7 @@ class _AuthGateState extends State<AuthGate> {
     }
 
     if (_authenticated) {
-      return AlarmHomepageScreen(onLogout: _handleLogout);
+      return const HomeScreen();
     }
 
     return AuthScreen(
@@ -145,12 +151,9 @@ class _LoginFormState extends State<LoginForm> {
       child: SingleChildScrollView(
         child: Form(
           key: _formKey,
-          child: Container(
-            constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width - 32, // Account for padding
-            ),
-            child: Card(
-              color: Theme.of(context).colorScheme.surfaceVariant,
+          child: Card(
+            color: Theme.of(context).colorScheme.surfaceVariant,
+            child: SingleChildScrollView(
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(
@@ -397,20 +400,15 @@ class _RegisterFormState extends State<RegisterForm> {
       child: SingleChildScrollView(
         child: Form(
           key: _formKey,
-          child: Container(
-            constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width - 32, // Account for padding
-            ),
-            child: Column(
-              children: [
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 250),
-                  child: _step == _RegisterStep.form
-                      ? _buildForm(cardColor)
-                      : _buildOtp(cardColor),
-                ),
-              ],
-            ),
+          child: Column(
+            children: [
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 250),
+                child: _step == _RegisterStep.form
+                    ? _buildForm(cardColor)
+                    : _buildOtp(cardColor),
+              ),
+            ],
           ),
         ),
       ),
@@ -420,82 +418,84 @@ class _RegisterFormState extends State<RegisterForm> {
   Widget _buildForm(Color cardColor) {
     return Card(
       color: cardColor,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Daftar Akun',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _emailController,
-              decoration: const InputDecoration(labelText: 'Email'),
-              validator: (value) {
-                if (value == null || value.isEmpty) return 'Email wajib diisi';
-                return null;
-              },
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _nameController,
-              decoration: const InputDecoration(labelText: 'Nama lengkap'),
-              validator: (value) {
-                if (value == null || value.isEmpty) return 'Nama wajib diisi';
-                return null;
-              },
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _usernameController,
-              decoration: const InputDecoration(labelText: 'Username'),
-              validator: (value) {
-                if (value == null || value.isEmpty) return 'Username wajib diisi';
-                return null;
-              },
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _passwordController,
-              decoration: InputDecoration(
-                labelText: 'Password',
-                suffixIcon: IconButton(
-                  icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
-                  onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
-                  iconSize: 20, // Smaller icon size
-                  padding: EdgeInsets.zero, // Remove padding
-                  constraints: const BoxConstraints(), // Remove constraints
+      child: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Daftar Akun',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _emailController,
+                decoration: const InputDecoration(labelText: 'Email'),
+                validator: (value) {
+                  if (value == null || value.isEmpty) return 'Email wajib diisi';
+                  return null;
+                },
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _nameController,
+                decoration: const InputDecoration(labelText: 'Nama lengkap'),
+                validator: (value) {
+                  if (value == null || value.isEmpty) return 'Nama wajib diisi';
+                  return null;
+                },
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _usernameController,
+                decoration: const InputDecoration(labelText: 'Username'),
+                validator: (value) {
+                  if (value == null || value.isEmpty) return 'Username wajib diisi';
+                  return null;
+                },
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _passwordController,
+                decoration: InputDecoration(
+                  labelText: 'Password',
+                  suffixIcon: IconButton(
+                    icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
+                    onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                    iconSize: 20, // Smaller icon size
+                    padding: EdgeInsets.zero, // Remove padding
+                    constraints: const BoxConstraints(), // Remove constraints
+                  ),
+                ),
+                obscureText: _obscurePassword,
+                validator: (value) {
+                  if (value == null || value.isEmpty) return 'Password wajib diisi';
+                  if (value.length < 6) return 'Minimal 6 karakter';
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _loading ? null : _sendOtp,
+                  child: _loading
+                      ? const SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Kirim OTP & Lanjut'),
                 ),
               ),
-              obscureText: _obscurePassword,
-              validator: (value) {
-                if (value == null || value.isEmpty) return 'Password wajib diisi';
-                if (value.length < 6) return 'Minimal 6 karakter';
-                return null;
-              },
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: _loading ? null : _sendOtp,
-                child: _loading
-                    ? const SizedBox(
-                        height: 20,
-                        width: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('Kirim OTP & Lanjut'),
+              const SizedBox(height: 4),
+              const Text(
+                'Setelah OTP dikirim, tunggu sekitar 1 menit. Masukkan kode untuk menyelesaikan registrasi.',
+                style: TextStyle(color: Colors.black54),
               ),
-            ),
-            const SizedBox(height: 4),
-            const Text(
-              'Setelah OTP dikirim, tunggu sekitar 1 menit. Masukkan kode untuk menyelesaikan registrasi.',
-              style: TextStyle(color: Colors.black54),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

@@ -65,6 +65,9 @@ dependencies:
   latlong2: ^0.8.1
   flutter_ringtone_player: ^4.0.0
   vibration: ^3.1.4
+  url_launcher: ^6.3.0
+  # Untuk background geofencing
+  geofence_foreground_service: ^1.1.5
 
 dev_dependencies:
   flutter_test:

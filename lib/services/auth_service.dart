@@ -92,34 +92,45 @@ class AuthService {
   }
 
   /// Mengambil access token yang masih valid, jika hampir kedaluwarsa mencoba refresh.
-  /// Mengembalikan null jika tak ada token atau refresh token tidak tersedia.
+  /// Mengembalikan null jika tak ada token atau refresh token tidak tersedia atau keduanya expired.
   Future<String?> getValidAccessToken() async {
     final accessToken = await TokenStorage.getAccessToken();
     final refreshToken = await TokenStorage.getRefreshToken();
 
-    // Anggap tidak login jika tidak ada refresh token.
+    print('[AuthService] Checking tokens - access: ${accessToken != null ? "exists" : "null"}, refresh: ${refreshToken != null ? "exists" : "null"}');
+
+    // Anggap tidak login jika tidak ada refresh token atau access token.
     if (accessToken == null ||
         accessToken.isEmpty ||
         refreshToken == null ||
         refreshToken.isEmpty) {
+      print('[AuthService] No tokens found, user not authenticated');
       return null;
     }
 
     final expiresAt = await TokenStorage.getAccessExpiresAtMillis();
     final now = DateTime.now().millisecondsSinceEpoch;
 
-    // Jika belum ada info expire, pakai apa adanya.
-    if (expiresAt == null || now < expiresAt - 5000) {
+    print('[AuthService] Token expires at: ${expiresAt != null ? DateTime.fromMillisecondsSinceEpoch(expiresAt) : "unknown"}, now: ${DateTime.fromMillisecondsSinceEpoch(now)}');
+
+    // Jika belum ada info expire atau token masih valid (dengan buffer 30 detik)
+    if (expiresAt == null || now < expiresAt - 30000) {
+      print('[AuthService] Token is valid, returning existing token');
       return accessToken;
     }
 
-    // Token hampir habis, coba refresh.
+    print('[AuthService] Token expired or expiring soon, attempting refresh...');
+
+    // Token hampir habis atau sudah expired, coba refresh.
     try {
       final newToken = await refresh(refreshToken);
-      return newToken.accessToken ?? accessToken;
-    } catch (_) {
-      // Jangan gagal total; tetap pakai token lama.
-      return accessToken;
+      print('[AuthService] Token refresh successful');
+      return newToken.accessToken; // Pastikan return token baru
+    } catch (e) {
+      print('[AuthService] Token refresh failed: $e');
+      // Refresh gagal, bersihkan token dan return null
+      await TokenStorage.clearAuthTokens();
+      return null;
     }
   }
 
