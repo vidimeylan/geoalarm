@@ -1,10 +1,13 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../models/alarm.dart';
 import '../services/auth_service.dart';
 import '../services/alarm_api_service.dart';
+import '../services/alarm_repository.dart';
 import '../services/geofence_service.dart';
+import '../services/permission_helper.dart';
 import 'alarm/alarm_form_screen.dart';
 import 'news/news_screen.dart';
 
@@ -16,6 +19,21 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  bool _isLoggedIn = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkAuth();
+  }
+
+  Future<void> _checkAuth() async {
+    final token = await AuthService().getValidAccessToken();
+    if (mounted) {
+      setState(() => _isLoggedIn = token != null);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -25,16 +43,29 @@ class _HomeScreenState extends State<HomeScreen> {
         foregroundColor: Colors.black,
         elevation: 0,
         actions: [
-          IconButton(
-            onPressed: () async {
-              await AuthService().logout();
-              if (mounted) {
-                Navigator.of(context).pushReplacementNamed('/auth');
-              }
-            },
-            icon: const Icon(Icons.logout),
-            tooltip: 'Keluar',
-          ),
+          if (_isLoggedIn)
+            IconButton(
+              onPressed: () async {
+                await AuthService().logout();
+                if (mounted) {
+                  setState(() => _isLoggedIn = false);
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Berhasil keluar')));
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Berhasil keluar')));
+                }
+              },
+              icon: const Icon(Icons.logout),
+              tooltip: 'Keluar',
+            )
+          else
+            IconButton(
+              onPressed: () async {
+                await Navigator.of(context).pushNamed('/auth');
+                // Refresh state after returning from auth screen
+                _checkAuth();
+              },
+              icon: const Icon(Icons.login),
+              tooltip: 'Masuk',
+            ),
         ],
       ),
       body: SafeArea(
@@ -44,7 +75,7 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               const SizedBox(height: 20),
               const Text(
-                'Selamat Datang!',
+                'Halo !',
                 style: TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.bold,
@@ -115,13 +146,15 @@ class _AlarmSectionState extends State<AlarmSection> with WidgetsBindingObserver
   late Timer _timer;
   late DateTime _currentTime;
   List<Alarm> _alarms = [];
-  final AlarmApiService _api = AlarmApiService();
+  final AlarmRepository _repo = AlarmRepository();
   bool _loading = false;
+  bool _isLoggedIn = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _checkAuth();
     _currentTime = DateTime.now();
     _loadAlarms(); // Muat data alarm dari API saat aplikasi dimulai
     // Mulai monitoring geofence saat layar alarm aktif
@@ -134,19 +167,27 @@ class _AlarmSectionState extends State<AlarmSection> with WidgetsBindingObserver
     });
   }
 
+  Future<void> _checkAuth() async {
+    final token = await AuthService().getValidAccessToken();
+    if (mounted) {
+      setState(() => _isLoggedIn = token != null);
+    }
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
     if (state == AppLifecycleState.resumed) {
       // Refresh alarms when app resumes (e.g., after dismissing alarm)
       _loadAlarms();
+      _checkAuth();
     }
   }
 
   Future<void> _loadAlarms() async {
     setState(() => _loading = true);
     try {
-      final list = await _api.fetchAlarms();
+      final list = await _repo.fetchAlarms();
       if (mounted) setState(() => _alarms = list);
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Gagal memuat alarm: $e')));
@@ -161,8 +202,13 @@ class _AlarmSectionState extends State<AlarmSection> with WidgetsBindingObserver
     );
     if (created == true) {
       await _loadAlarms();
+      
+      // Cek permission secara eksplisit dengan dialog helper
+      // Agar user tidak kaget tiba-tiba buka settings
+      await PermissionHelper.requestLocationPermission(context);
+
       // Refresh geofences after adding new alarm
-      await GeofenceService().refreshGeofences();
+      await GeofenceService().evaluateServiceState();
     }
   }
 
@@ -172,18 +218,40 @@ class _AlarmSectionState extends State<AlarmSection> with WidgetsBindingObserver
     );
     if (updated == true) {
       await _loadAlarms();
+      
+      // Cek permission juga saat edit, siapa tau user baru nyalain alarm
+      await PermissionHelper.requestLocationPermission(context);
+
       // Refresh geofences after editing alarm
-      await GeofenceService().refreshGeofences();
+      await GeofenceService().evaluateServiceState();
     }
   }
 
   Future<void> _toggleAlarm(int index, bool value) async {
+    // JIKA USER MAU MENYALAKAN ALARM (value == true)
+    if (value == true) {
+       // Cek permission dulu!
+       bool hasPermission = await PermissionHelper.requestLocationPermission(context);
+       
+       if (!hasPermission) {
+         // Cek sekali lagi (karena user mungkin baru balik dari Settings)
+         // Kalau masih false, matikan switch-nya (cegah user nyalain)
+         if (await Permission.locationAlways.status.isGranted) {
+            // Aman, user ternyata sudah setujui
+         } else {
+            // Gagal, user menolak/batal di settings
+            setState(() => _alarms[index].isActive = false); // Balikin jadi mati
+            return; // Stop, jangan nyalain service
+         }
+       }
+    }
+
     final alarm = _alarms[index];
     try {
-      await _api.toggleActive(alarm.id, value);
+      await _repo.toggleActive(alarm.id, value);
       setState(() => _alarms[index].isActive = value);
       // Refresh geofences after toggling alarm
-      await GeofenceService().refreshGeofences();
+      await GeofenceService().evaluateServiceState();
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Gagal toggle: $e')));
     }
@@ -204,10 +272,10 @@ class _AlarmSectionState extends State<AlarmSection> with WidgetsBindingObserver
     );
     if (ok != true) return;
     try {
-      await _api.deleteAlarm(alarm.id);
+      await _repo.deleteAlarm(alarm.id);
       if (mounted) setState(() => _alarms.removeAt(index));
       // Refresh geofences after deleting alarm
-      await GeofenceService().refreshGeofences();
+      await GeofenceService().evaluateServiceState();
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Gagal hapus: $e')));
     }
@@ -224,7 +292,7 @@ class _AlarmSectionState extends State<AlarmSection> with WidgetsBindingObserver
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _timer.cancel();
-    GeofenceService().stopMonitoring();
+    // GeofenceService().stopMonitoring();
     super.dispose();
   }
 
@@ -239,6 +307,37 @@ class _AlarmSectionState extends State<AlarmSection> with WidgetsBindingObserver
           onPressed: () => Navigator.of(context).pop(),
           icon: const Icon(Icons.arrow_back, color: Colors.white),
         ),
+        actions: [
+          ValueListenableBuilder<bool>(
+            valueListenable: GeofenceService().isRunningNotifier,
+            builder: (context, isRunning, child) {
+              return Padding(
+                padding: const EdgeInsets.only(right: 16.0),
+                child: IconButton(
+                  onPressed: () {
+                    if (isRunning) {
+                      GeofenceService().stopMonitoring();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Service dimatikan manual')),
+                      );
+                    } else {
+                      GeofenceService().startMonitoring();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Service diaktifkan manual')),
+                      );
+                    }
+                  },
+                  icon: Icon(
+                    isRunning ? Icons.check_circle : Icons.power_settings_new,
+                    color: isRunning ? Colors.greenAccent : Colors.redAccent,
+                    size: 28,
+                  ),
+                  tooltip: isRunning ? 'Service Aktif (Ketuk untuk matikan)' : 'Service Mati (Ketuk untuk aktifkan)',
+                ),
+              );
+            },
+          ),
+        ],
       ),
       backgroundColor: Colors.black,
       body: Column(

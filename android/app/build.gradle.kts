@@ -33,9 +33,20 @@ android {
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
+            // -- PERUBAHAN UNTUK KOTLIN DSL --
+            
+            // 1. Pakai getByName untuk signingConfig
             signingConfig = signingConfigs.getByName("debug")
+            
+            // 2. Pakai 'is...' dan tanda sama dengan '='
+            isMinifyEnabled = true
+            isShrinkResources = true
+            
+            // 3. Pakai kurung () dan petik dua " " (Bukan petik satu)
+            proguardFiles(
+                getDefaultProguardFile("proguard-android.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 }

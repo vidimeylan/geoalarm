@@ -6,7 +6,7 @@ import '../models/alarm.dart';
 import 'auth_service.dart';
 
 class AlarmApiService {
-  static const String _baseUrl = 'https://siagaturunbe.isasubani.my.id';
+  static const String _baseUrl = 'https://api.siagaturun.web.id';
   final http.Client _client;
 
   AlarmApiService({http.Client? client}) : _client = client ?? http.Client();

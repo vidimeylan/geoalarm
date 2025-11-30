@@ -6,6 +6,8 @@ import 'package:http/http.dart' as http;
 
 import '../../models/alarm.dart';
 import '../../services/alarm_api_service.dart';
+import '../../services/alarm_repository.dart';
+import 'package:uuid/uuid.dart';
 import 'map_picker_screen.dart';
 
 class AlarmFormScreen extends StatefulWidget {
@@ -199,11 +201,31 @@ class _AlarmFormScreenState extends State<AlarmFormScreen> {
 
     setState(() => _loading = true);
     try {
-      final service = AlarmApiService();
+      final repo = AlarmRepository();
       if (widget.alarm == null) {
-        await service.createAlarm(payload);
+        // Create new alarm
+        final newAlarm = Alarm(
+          id: const Uuid().v4(), // Generate local ID
+          label: label,
+          lat: lat,
+          lon: lon,
+          radius: radius < 10 ? 10 : radius,
+          isActive: _isActive,
+          createdDate: DateTime.now(),
+        );
+        await repo.addAlarm(newAlarm);
       } else {
-        await service.updateAlarm(widget.alarm!.id, payload);
+        // Update existing alarm
+        final updatedAlarm = Alarm(
+          id: widget.alarm!.id,
+          label: label,
+          lat: lat,
+          lon: lon,
+          radius: radius < 10 ? 10 : radius,
+          isActive: _isActive,
+          createdDate: widget.alarm!.createdDate,
+        );
+        await repo.updateAlarm(updatedAlarm);
       }
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {

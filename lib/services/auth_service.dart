@@ -6,7 +6,7 @@ import '../models/token_response.dart';
 import 'token_storage.dart';
 
 class AuthService {
-  static const String _baseUrl = 'https://siagaturunbe.isasubani.my.id';
+  static const String _baseUrl = 'https://api.siagaturun.web.id';
   final http.Client _client;
 
   AuthService({http.Client? client}) : _client = client ?? http.Client();

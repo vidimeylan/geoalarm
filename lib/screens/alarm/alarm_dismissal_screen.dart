@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../models/alarm.dart';
-import '../../services/alarm_api_service.dart';
+import '../../services/alarm_repository.dart';
 import '../../services/geofence_service.dart';
 import '../../main.dart' show navigatorKey;
 
@@ -24,7 +24,7 @@ class _AlarmDismissalScreenState extends State<AlarmDismissalScreen> {
   @override
   void initState() {
     super.initState();
-    // Prevent system back button from working
+    // Hide status bar agar fokus (Immersive Mode)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     });
@@ -32,6 +32,7 @@ class _AlarmDismissalScreenState extends State<AlarmDismissalScreen> {
 
   @override
   void dispose() {
+    // Kembalikan status bar saat keluar
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
         overlays: SystemUiOverlay.values);
     super.dispose();
@@ -41,21 +42,33 @@ class _AlarmDismissalScreenState extends State<AlarmDismissalScreen> {
     if (_dismissing) return;
     setState(() => _dismissing = true);
 
+    // [PENTING 1] Matikan Suara & Getar DULUAN (Prioritas Utama)
+    GeofenceService().stopAlarmFeedback();
+
     try {
-      // Stop alarm feedback first
-      GeofenceService().stopAlarmFeedback();
+      // [PENTING 2] Update Status Alarm (Local & Server)
+      // Gunakan Repository agar local storage terupdate juga
+      try {
+        await AlarmRepository().toggleActive(widget.alarm.id, false);
+      } catch (e) {
+        print("Gagal update status alarm: $e");
+      }
 
-      // Toggle alarm to inactive via API
-      await AlarmApiService().toggleActive(widget.alarm.id, false);
+      // [PENTING 3] Evaluasi Service Background
+      // Cek apakah masih ada alarm lain yang aktif?
+      // Jika tidak ada, service akan mati otomatis. Jika ada, refresh geofence.
+      await GeofenceService().evaluateServiceState();
 
-      // Navigate back to home screen
+      // Kembali ke Home
       if (mounted) {
+        // Gunakan navigatorKey global untuk memastikan keluar dari overlay apapun
         navigatorKey.currentState?.popUntil((route) => route.isFirst);
       }
     } catch (e) {
+      // Fallback jika terjadi error sangat fatal
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Gagal mematikan alarm: $e')),
+          SnackBar(content: Text('Error system: $e')),
         );
         setState(() => _dismissing = false);
       }
@@ -64,38 +77,68 @@ class _AlarmDismissalScreenState extends State<AlarmDismissalScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // WillPopScope deprecated di Flutter terbaru, tapi masih oke dipakai.
+    // Tujuannya agar user GAK BISA tekan tombol back HP, harus tekan tombol di layar.
     return WillPopScope(
-      onWillPop: () async => false, // Prevent back button
+      onWillPop: () async => false, 
       child: Scaffold(
         backgroundColor: Colors.red,
         body: SafeArea(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const SizedBox(height: 40),
-              const Icon(
-                Icons.alarm,
-                size: 100,
-                color: Colors.white,
+              // Animasi berdenyut (Opsional, biar keren)
+              TweenAnimationBuilder(
+                tween: Tween<double>(begin: 1.0, end: 1.2),
+                duration: const Duration(milliseconds: 500),
+                curve: Curves.easeInOut,
+                builder: (context, double scale, child) {
+                  return Transform.scale(scale: scale, child: child);
+                },
+                onEnd: () => setState(() {}), // Loop animation (simple hack)
+                child: const Icon(
+                  Icons.alarm_off,
+                  size: 100,
+                  color: Colors.white,
+                ),
               ),
               const SizedBox(height: 20),
+              
               Text(
-                'ALARM: ${widget.alarm.label}',
+                'SIAP-SIAP TURUN!',
                 style: const TextStyle(
-                  fontSize: 28,
+                  fontSize: 24,
                   fontWeight: FontWeight.bold,
                   color: Colors.white,
+                  letterSpacing: 1.2,
                 ),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 10),
               Text(
-                'Anda memasuki radius ${widget.alarm.radius} meter',
+                widget.alarm.label,
                 style: const TextStyle(
-                  fontSize: 16,
-                  color: Colors.white70,
+                  fontSize: 32,
+                  fontWeight: FontWeight.w900,
+                  color: Colors.white,
                 ),
                 textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  'Radius < ${widget.alarm.radius} meter',
+                  style: const TextStyle(
+                    fontSize: 18,
+                    color: Colors.white,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
               ),
               const Spacer(),
               Padding(
@@ -103,21 +146,25 @@ class _AlarmDismissalScreenState extends State<AlarmDismissalScreen> {
                 child: SizedBox(
                   width: double.infinity,
                   height: 80,
-                  child: ElevatedButton(
+                  child: ElevatedButton.icon(
                     onPressed: _dismissing ? null : _dismissAlarm,
+                    icon: _dismissing 
+                        ? const SizedBox.shrink() 
+                        : const Icon(Icons.stop_circle_outlined, size: 32),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.white,
                       foregroundColor: Colors.red,
+                      elevation: 10,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(16),
                       ),
                     ),
-                    child: _dismissing
+                    label: _dismissing
                         ? const CircularProgressIndicator(color: Colors.red)
                         : const Text(
                             'MATIKAN ALARM',
                             style: TextStyle(
-                              fontSize: 24,
+                              fontSize: 22,
                               fontWeight: FontWeight.bold,
                             ),
                           ),

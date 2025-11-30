@@ -45,4 +45,8 @@ class Alarm {
       createdDate: map['createdDate'] != null ? DateTime.tryParse(map['createdDate'].toString()) : null,
     );
   }
+  @override
+  String toString() {
+    return 'Alarm(id: $id, label: $label, lat: $lat, lon: $lon, radius: $radius, active: $isActive)';
+  }
 }

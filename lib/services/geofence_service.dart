@@ -1,8 +1,9 @@
 import 'dart:async';
-import 'dart:developer';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_ringtone_player/flutter_ringtone_player.dart';
 import 'package:geofence_foreground_service/constants/geofence_event_type.dart';
@@ -12,310 +13,516 @@ import 'package:geofence_foreground_service/models/zone.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlng/latlng.dart';
 import 'package:vibration/vibration.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../models/alarm.dart';
-import '../screens/alarm/alarm_dismissal_screen.dart';
-import '../main.dart' show navigatorKey;
-import 'alarm_api_service.dart';
+import '../main.dart' show navigatorKey; 
+import '../screens/alarm/alarm_dismissal_screen.dart'; 
+import 'alarm_repository.dart';
 import 'location_service.dart';
 
-/// Background callback dispatcher for geofence events
+// --- KONFIGURASI ---
+const int kHybridBufferRadius = 500; 
+const String kBgChannelId = 'siagaturun_bg_channel'; // Channel ID
+const String kBgChannelName = 'SiagaTurun Geoalarm Service';
+// Ganti nama icon di sini agar konsisten
+const String kIconName = '@mipmap/launcher_icon'; 
+
+// ==============================================================================
+// 1. BACKGROUND SERVICE ENTRY POINT 
+// ==============================================================================
 @pragma('vm:entry-point')
-void geofenceCallbackDispatcher() {
-  GeofenceForegroundService().handleTrigger(
-    backgroundTriggerHandler: (zoneId, triggerType) async {
-      log('Geofence triggered: $zoneId, type: $triggerType', name: 'GeofenceService');
+void onBackgroundServiceStart(ServiceInstance service) async {
+  DartPluginRegistrant.ensureInitialized();
+  
+  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+      FlutterLocalNotificationsPlugin();
 
-      if (triggerType == GeofenceEventType.enter) {
+  // 1. Setup Channel
+  const AndroidNotificationChannel channel = AndroidNotificationChannel(
+    kBgChannelId,
+    kBgChannelName,
+    description: 'Service pemantau lokasi',
+    importance: Importance.low, 
+  );
+  await flutterLocalNotificationsPlugin
+      .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+      ?.createNotificationChannel(channel);
+
+  StreamSubscription<Position>? positionStream;
+  Timer? heartbeatTimer; // Timer untuk polling ringan
+  final LocationService locationService = LocationService();
+  final AlarmRepository repo = AlarmRepository();
+  
+  // Variable flag biar gak start double
+  bool isPrecisionMode = false;
+
+  // 2. Set Status Awal: STANDBY
+  if (service is AndroidServiceInstance) {
+      if (await service.isForegroundService()) {
+        flutterLocalNotificationsPlugin.show(
+          888,
+          'GeoAlarm: Standby',
+          'Menunggu masuk area tujuan.',
+          const NotificationDetails(
+            android: AndroidNotificationDetails(
+              kBgChannelId,
+              kBgChannelName,
+              icon: kIconName,
+              ongoing: true,
+              showWhen: false,
+            ),
+          ),
+        );
+      }
+  }
+
+  // --- FUNGSI START TRACKING (PRECISION MODE) ---
+  // Dipisahkan agar bisa dipanggil langsung dari heartbeat (isolate yang sama)
+  Future<void> startPrecisionTracking() async {
+    if (isPrecisionMode) return; // Cegah double start
+    isPrecisionMode = true;
+
+    print('[BgService] 🚀 SWITCHING TO PRECISION MODE...');
+    
+    // UBAH Notifikasi jadi "Mode Presisi"
+    if (service is AndroidServiceInstance) {
+      if (await service.isForegroundService()) {
+        flutterLocalNotificationsPlugin.show(
+          888,
+          'Mode Presisi Aktif',
+          'Jarak dekat! Memantau meter-per-meter...',
+          const NotificationDetails(
+            android: AndroidNotificationDetails(
+              kBgChannelId,
+              kBgChannelName,
+              icon: kIconName,
+              ongoing: true,
+              importance: Importance.high, 
+              color: Colors.red,
+            ),
+          ),
+        );
+      }
+    }
+
+    await positionStream?.cancel();
+
+    positionStream = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        distanceFilter: 10, 
+      ),
+    ).listen((pos) async {
+      try {
+        List<Alarm> activeAlarms = [];
         try {
-          // Since we can't directly call Flutter UI from background isolate,
-          // we'll use a notification with payload to wake up the main app
-          log('BACKGROUND ALARM TRIGGERED: $zoneId', name: 'GeofenceService');
-
-          // The notification will be handled by the main app's notification tap handler
-          // This will bring the app to foreground and trigger the alarm
+           final alarms = await repo.fetchAlarms();
+           activeAlarms = alarms.where((a) => a.isActive).toList();
         } catch (e) {
-          log('Error in geofence callback: $e', name: 'GeofenceService');
+           print('[BgService] Fetch Error: $e'); // LOG ERRORNYA
+           return; 
         }
+
+        bool closeToAny = false;
+
+        for (final alarm in activeAlarms) {
+          final distance = locationService.getDistance(pos.latitude, pos.longitude, alarm.lat, alarm.lon);
+          
+          if (distance <= alarm.radius) {
+            print('[BgService] ALARM HIT!');
+            _triggerBackgroundAlarm(alarm);
+            
+            positionStream?.cancel();
+            isPrecisionMode = false; // Reset flag agar heartbeat jalan lagi
+            
+            // Kembalikan notifikasi service ke "Standby"
+            if (service is AndroidServiceInstance) {
+                flutterLocalNotificationsPlugin.show(
+                  888,
+                  'GeoAlarm: Standby',
+                  'Menunggu masuk area tujuan.',
+                  const NotificationDetails(
+                    android: AndroidNotificationDetails(
+                      kBgChannelId,
+                      kBgChannelName,
+                      icon: kIconName,
+                      ongoing: true,
+                      showWhen: false,
+                    ),
+                  ),
+                );
+            }
+            return;
+          }
+          
+          if (distance < (alarm.radius + kHybridBufferRadius)) {
+            closeToAny = true;
+          }
+        }
+        
+        if (!closeToAny && activeAlarms.isNotEmpty) {
+            print('[BgService] Menjauh. Kembali ke Standby.');
+            positionStream?.cancel(); 
+            isPrecisionMode = false; // Reset flag
+            
+            // Balik ke notif standby
+            if (service is AndroidServiceInstance) {
+                flutterLocalNotificationsPlugin.show(
+                  888,
+                  'GeoAlarm: Standby',
+                  'Menunggu masuk area tujuan.',
+                  const NotificationDetails(
+                    android: AndroidNotificationDetails(
+                      kBgChannelId,
+                      kBgChannelName,
+                      icon: kIconName,
+                      ongoing: true,
+                    ),
+                  ),
+                );
+            }
+        }
+      } catch (e) {
+        print('[BgService] Stream Error: $e');
+      }
+    });
+  }
+
+  // --- FUNGSI HEARTBEAT (POLITE POLLING) ---
+  // Cek lokasi setiap 15 detik sebagai backup jika Geofence macet
+  heartbeatTimer = Timer.periodic(const Duration(seconds: 15), (timer) async {
+    print('[BgService] Heartbeat: Running');
+    if (isPrecisionMode) return; // Kalau sudah presisi, jangan cek lagi
+
+    try {
+      // Cek lokasi sekilas (Low Accuracy gapapa buat hemat baterai)
+      Position pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.medium);
+      
+      // Cek apakah dekat dengan alarm manapun?
+      final alarms = await repo.fetchAlarms(); // Pastikan repo aman dari error
+      final activeAlarms = alarms.where((a) => a.isActive).toList();
+      print("[BgService-Heartbeat] Alarm: $alarms");
+      print("[BgService-Heartbeat] Active Alarm: $activeAlarms");
+      bool isClose = false;
+      for (final alarm in activeAlarms) {
+         double dist = locationService.getDistance(pos.latitude, pos.longitude, alarm.lat, alarm.lon);        
+         print('[BgService] Heartbeat: Jarak: $dist');
+         // Kalau masuk buffer, paksa start tracking
+         if (dist < (alarm.radius + kHybridBufferRadius)) {
+            isClose = true;
+            break;
+         }
       }
 
+      if (isClose) {
+         print('[BgService] Heartbeat: Dekat target! Memaksa Mode Presisi.');
+         // Panggil langsung fungsi lokal, JANGAN pakai invoke jika di isolate yang sama
+         startPrecisionTracking();
+      }
+    } catch (e) {
+      print('[BgService] Heartbeat Error: $e');
+    }
+  });
+  // ------------------------------------------
+
+  service.on('stop_service').listen((event) {
+    heartbeatTimer?.cancel(); // Matikan heartbeat
+    positionStream?.cancel();
+    service.stopSelf();
+    print('[BgService] Service Killed.');
+  });
+
+  service.on('stop_alarm').listen((event) {
+    print('[BgService] Stopping feedback...');
+    FlutterRingtonePlayer().stop();
+    Vibration.cancel();
+  });
+
+  service.on('start_tracking').listen((event) async {
+    // Listener ini tetap ada untuk menerima trigger dari Main Isolate / Geofence Trigger
+    startPrecisionTracking();
+  });
+}
+
+void _triggerBackgroundAlarm(Alarm alarm) {
+    try {
+      FlutterRingtonePlayer().playAlarm(looping: true, asAlarm: true);
+      Vibration.vibrate(pattern: [0, 1000, 500, 1000], repeat: 1);
+    } catch (_) {}
+
+    final FlutterLocalNotificationsPlugin notifs = FlutterLocalNotificationsPlugin();
+    
+    // ... setup channel (sama seperti sebelumnya) ...
+    const AndroidNotificationChannel alarmChannel = AndroidNotificationChannel(
+      'geoalarm_alert', 'GeoAlarm Alert', 
+      importance: Importance.max, 
+      playSound: true,
+    );
+    notifs.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()?.createNotificationChannel(alarmChannel);
+
+    notifs.show(
+      alarm.id.hashCode, // ID Notifikasi (Integer)
+      '🚨 SAMPAI TUJUAN: ${alarm.label}',
+      'Jarak < ${alarm.radius} meter. Ketuk untuk mematikan!',
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          'geoalarm_alert', 'GeoAlarm Alert',
+          importance: Importance.max, 
+          priority: Priority.max,
+          fullScreenIntent: true, // Muncul di lockscreen
+          category: AndroidNotificationCategory.alarm,
+          icon: '@mipmap/launcher_icon',
+          ongoing: true, // Biar gak bisa di-swipe close sembarangan
+          autoCancel: false, // Biar gak ilang pas diklik (kita handle manual)
+        )
+      ),
+      // [PENTING] Payload ini yang dibaca main.dart
+      payload: alarm.id, 
+    );
+}
+
+@pragma('vm:entry-point')
+void geofenceCallbackDispatcher() {
+  DartPluginRegistrant.ensureInitialized();
+  GeofenceForegroundService().handleTrigger(
+    backgroundTriggerHandler: (zoneId, triggerType) async {
+      print('[GeofenceService] Geofence Triggered: $triggerType');
+
+      if (triggerType == GeofenceEventType.enter) {
+        final service = FlutterBackgroundService();
+        await service.startService(); 
+        await Future.delayed(const Duration(seconds: 1));
+        service.invoke("start_tracking"); 
+      } 
       return true;
     },
   );
 }
 
+// ==============================================================================
+// 3. MAIN CLASS 
+// ==============================================================================
 class GeofenceService {
   GeofenceService._private();
   static final GeofenceService _instance = GeofenceService._private();
   factory GeofenceService() => _instance;
 
-  final AlarmApiService _api = AlarmApiService();
-  final FlutterLocalNotificationsPlugin _notifications = FlutterLocalNotificationsPlugin();
+  final AlarmRepository _repo = AlarmRepository();
   final LocationService _locationService = LocationService();
-
-  final Set<String> _alreadyTriggered = {};
-  Timer? _alertTimer;
-  bool _isAlerting = false;
   bool _initialized = false;
-  bool _serviceStarted = false;
-
-  StreamSubscription<Position>? _foregroundSubscription;
+  
+  final ValueNotifier<bool> isRunningNotifier = ValueNotifier<bool>(false);
+  bool get isRunning => isRunningNotifier.value;
 
   Future<void> init() async {
     if (_initialized) return;
-    const android = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const ios = DarwinInitializationSettings();
-    await _notifications.initialize(const InitializationSettings(android: android, iOS: ios));
+
+    final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+        FlutterLocalNotificationsPlugin();
+        
+    const AndroidNotificationChannel channel = AndroidNotificationChannel(
+      kBgChannelId,
+      kBgChannelName,
+      description: 'Background Location Service',
+      importance: Importance.low, 
+    );
+
+    await flutterLocalNotificationsPlugin
+        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(channel);
+
+    // CONFIG SERVICE
+    final service = FlutterBackgroundService();
+    await service.configure(
+      androidConfiguration: AndroidConfiguration(
+        onStart: onBackgroundServiceStart,
+        autoStart: false, 
+        isForegroundMode: true,
+        notificationChannelId: kBgChannelId, 
+        initialNotificationTitle: 'GeoAlarm Service',
+        initialNotificationContent: 'Menyiapkan...',
+        foregroundServiceNotificationId: 888,
+      ),
+      iosConfiguration: IosConfiguration(),
+    );
+    
     _initialized = true;
   }
 
-  Future<void> startMonitoring() async {
-    await init();
-    if (_serviceStarted && _foregroundSubscription != null) return;
-
-    print('[GeofenceService] Starting hybrid geofencing (background + foreground)...');
-
-    // Start background geofencing service
-    try {
-      _serviceStarted = await GeofenceForegroundService().startGeofencingService(
-        notificationChannelId: 'geoalarm_geofencing_channel',
-        contentTitle: 'GeoAlarm - Monitoring Location',
-        contentText: 'App is monitoring your location for active alarms',
-        serviceId: 525600,
-        callbackDispatcher: geofenceCallbackDispatcher,
-        isInDebugMode: false, // Set to false for production
-        notificationIconData: const NotificationIconData(
-          resType: ResourceType.mipmap,
-          resPrefix: ResourcePrefix.ic,
-          name: 'launcher',
-        ),
-      );
-
-      if (_serviceStarted) {
-        print('[GeofenceService] ✅ Background geofencing service started');
-        await _setupActiveGeofences();
-      }
-    } catch (e) {
-      print('[GeofenceService] ❌ Error starting background service: $e');
-    }
-
-    // Start foreground location monitoring for more responsive detection
-    try {
-      await _startForegroundMonitoring();
-      print('[GeofenceService] ✅ Foreground monitoring started');
-    } catch (e) {
-      print('[GeofenceService] ❌ Error starting foreground monitoring: $e');
-    }
+  Future<void> restoreStatusFromSystem() async {
+    final service = FlutterBackgroundService();
+    bool isBgRunning = await service.isRunning();
+    isRunningNotifier.value = isBgRunning;
   }
 
-  Future<void> stopMonitoring() async {
-    try {
-      // Stop foreground monitoring
-      await _foregroundSubscription?.cancel();
-      _foregroundSubscription = null;
-
-      // Clear all geofences
-      await GeofenceForegroundService().removeAllGeoFences();
-      _alreadyTriggered.clear();
-      _stopAlarmFeedback();
-      _serviceStarted = false;
-      print('[GeofenceService] ✅ Hybrid geofencing stopped');
-    } catch (e) {
-      print('[GeofenceService] ❌ Error stopping geofencing: $e');
-    }
-  }
-
-  Future<void> _startForegroundMonitoring() async {
-    if (_foregroundSubscription != null) return;
-
-    // Request location permission if needed
+  Future<bool> _checkPermissions() async {
+    // 1. Cek permission dasar (While in Use) via Geolocator
     LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
+    
+    // JANGAN REQUEST DISINI, KARENA AKAN MEMBUKA SETTINGS TIBA-TIBA
+    // Service hanya boleh cek status. Request harus dilakukan di UI (HomeScreen).
     if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
-      print('[GeofenceService] Location permission denied for foreground monitoring');
+      print('[GeofenceService] Foreground permission missing.');
+      return false;
+    }
+
+    // 2. Cek Background Location (Always Allow) via Permission Handler
+    var status = await Permission.locationAlways.status;
+    if (!status.isGranted) {
+      print('[GeofenceService] Background permission missing.');
+      return false;
+    }
+    
+    // 3. Notification Permission (Android 13+)
+    if (await Permission.notification.isDenied) {
+       // Notifikasi mungkin masih oke diminta disini karena popup sistem biasa
+       // Tapi lebih aman kalau di UI juga. Kita biarkan dulu untuk notif.
+       await Permission.notification.request();
+    }
+
+    return true;
+  }
+
+  Future<void> startMonitoring() async {
+    // 0. Cek apakah ada alarm aktif?
+    final alarms = await _repo.fetchAlarms();
+    final activeAlarms = alarms.where((a) => a.isActive).toList();
+    if (activeAlarms.isEmpty) {
+      print('No active alarms. Service will not start.');
+      await stopMonitoring();
       return;
     }
 
-    _foregroundSubscription = _locationService.getPositionStream().listen((pos) async {
-      try {
-        // Load alarms every time (so new alarms are detected)
-        List<Alarm> activeAlarms = [];
-        try {
-          final alarms = await _api.fetchAlarms();
-          activeAlarms = alarms.where((a) => a.isActive).toList();
-        } catch (e) {
-          print('[GeofenceService] Error fetching alarms: $e');
-          return;
-        }
-
-        for (final alarm in activeAlarms) {
-          if (_alreadyTriggered.contains(alarm.id)) {
-            continue;
-          }
-
-          final distance = _locationService.getDistance(pos.latitude, pos.longitude, alarm.lat, alarm.lon);
-
-          if (distance <= alarm.radius) {
-            print('[GeofenceService] ✅ FOREGROUND TRIGGERED: "${alarm.label}" (${distance.toStringAsFixed(2)}m <= ${alarm.radius}m)');
-            _alreadyTriggered.add(alarm.id);
-            _triggerAlarm(alarm);
-          }
-        }
-      } catch (e) {
-        print('[GeofenceService] Error in foreground position listener: $e');
+    if (!await _checkPermissions()) return;
+    await init();
+    
+    try {
+      // 1. START BACKGROUND SERVICE (Mode Standby)
+      final service = FlutterBackgroundService();
+      if (!await service.isRunning()) {
+         await service.startService();
       }
-    }, onError: (error) {
-      print('[GeofenceService] Foreground location stream error: $error');
-    });
+      
+      // 2. START GEOFENCE (Ring 1)
+      await GeofenceForegroundService().startGeofencingService(
+        contentTitle: 'Siaga Turun - Geofence',
+        contentText: 'Memantau zona...',
+        notificationChannelId: 'geoalarm_fence_channel',
+        serviceId: 525600,
+        callbackDispatcher: geofenceCallbackDispatcher,
+        notificationIconData: const NotificationIconData(
+          resType: ResourceType.mipmap,
+          resPrefix: ResourcePrefix.ic, 
+          // Ganti nama icon disini juga
+          name: 'launcher_icon', 
+        ),
+      );
+      
+      isRunningNotifier.value = true;
+      await _setupActiveGeofences();
+      
+    } catch (e) {
+      print('Error starting service: $e');
+      isRunningNotifier.value = false;
+    }
+
+    // 3. Smart Check Awal
+    try {
+       Position currentPos = await Geolocator.getCurrentPosition();
+       _checkImmediateLogic(currentPos);
+    } catch (_) {}
+  }
+
+  /// Cek status alarm:
+  /// - Jika tidak ada alarm aktif -> Matikan service
+  /// - Jika ada alarm aktif -> Pastikan service nyala & update geofence
+  Future<void> evaluateServiceState() async {
+    final alarms = await _repo.fetchAlarms();
+    final activeAlarms = alarms.where((a) => a.isActive).toList();
+
+    if (activeAlarms.isEmpty) {
+      // Hapus pengecekan isRunning agar force stop jika memang harus mati
+      print('[GeofenceService] No active alarms left. Stopping service.');
+      await stopMonitoring();
+    } else {
+      if (!isRunning) {
+        print('[GeofenceService] Found active alarms. Starting service.');
+        await startMonitoring();
+      } else {
+        print('[GeofenceService] Refreshing active geofences.');
+        await _setupActiveGeofences();
+      }
+    }
   }
 
   Future<void> _setupActiveGeofences() async {
-    try {
-      // Clear existing geofences
       await GeofenceForegroundService().removeAllGeoFences();
-
-      // Fetch active alarms
-      final alarms = await _api.fetchAlarms();
+      final alarms = await _repo.fetchAlarms();
       final activeAlarms = alarms.where((a) => a.isActive).toList();
 
-      print('[GeofenceService] Setting up ${activeAlarms.length} active geofences');
-
       for (final alarm in activeAlarms) {
+        final hybridRadius = alarm.radius + kHybridBufferRadius;
         final zone = Zone(
-          id: alarm.id,
-          radius: alarm.radius.toDouble(),
+          id: alarm.id, 
+          radius: hybridRadius.toDouble(), 
           coordinates: [LatLng.degree(alarm.lat, alarm.lon)],
-          triggers: [GeofenceEventType.enter],
-          notificationResponsivenessMs: 5000, // 5 seconds
+          triggers: [GeofenceEventType.enter, GeofenceEventType.exit],
+          notificationResponsivenessMs: 10000, 
         );
-
-        final success = await GeofenceForegroundService().addGeofenceZone(zone: zone);
-        if (success) {
-          print('[GeofenceService] ✅ Added geofence: ${alarm.label} (${alarm.lat}, ${alarm.lon}, ${alarm.radius}m)');
-        } else {
-          print('[GeofenceService] ❌ Failed to add geofence: ${alarm.label}');
-        }
+        await GeofenceForegroundService().addGeofenceZone(zone: zone);
       }
-    } catch (e) {
-      print('[GeofenceService] ❌ Error setting up geofences: $e');
-    }
   }
-
-  void stopAlarmFeedback() {
-    _stopAlarmFeedback();
+  
+  Future<void> _checkImmediateLogic(Position pos) async {
+    final alarms = await _repo.fetchAlarms();
+    final activeAlarms = alarms.where((a) => a.isActive).toList();
+    bool isClose = false;
+    for (var alarm in activeAlarms) {
+      double dist = _locationService.getDistance(pos.latitude, pos.longitude, alarm.lat, alarm.lon);
+      if (dist < (alarm.radius + kHybridBufferRadius)) isClose = true;
+    }
+    
+    if (isClose) {
+      final service = FlutterBackgroundService();
+      service.invoke("start_tracking");
+    }
   }
 
   Future<void> refreshGeofences() async {
-    if (!_serviceStarted) return;
-    print('[GeofenceService] 🔄 Refreshing geofences...');
-    await _setupActiveGeofences();
-    print('[GeofenceService] ✅ Geofences refreshed');
+    if (isRunningNotifier.value) await _setupActiveGeofences();
   }
 
-  Future<void> _triggerAlarm(Alarm alarm) async {
-    print('[GeofenceService] 🔔 Triggering alarm for: "${alarm.label}"');
-    
-    // Vibrate briefly
-    try {
-      HapticFeedback.heavyImpact();
-      print('[GeofenceService] Haptic feedback triggered');
-    } catch (e) {
-      print('[GeofenceService] Haptic feedback error: $e');
-    }
-
-    // Try to navigate to alarm dismissal screen immediately
-    try {
-      navigatorKey.currentState?.push(
-        MaterialPageRoute(
-          builder: (_) => AlarmDismissalScreen(alarm: alarm),
-          fullscreenDialog: true,
-        ),
-      );
-      print('[GeofenceService] ✅ Navigated to alarm dismissal screen');
-    } catch (e) {
-      print('[GeofenceService] ❌ Error navigating to dismissal screen: $e');
-    }
-
-    // Show persistent notification that cannot be dismissed
-    const androidDetails = AndroidNotificationDetails(
-      'geoalarm_channel',
-      'GeoAlarm',
-      channelDescription: 'Notifikasi alarm saat memasuki area tujuan',
-      importance: Importance.max,
-      priority: Priority.max,
-      playSound: true,
-      enableVibration: true,
-      fullScreenIntent: true,
-      ongoing: true, // Makes notification non-dismissible
-      autoCancel: false, // Prevents auto-dismissal
-    );
-    const iosDetails = DarwinNotificationDetails(
-      presentSound: true,
-      presentAlert: true,
-      presentBadge: true,
-    );
-    const details = NotificationDetails(android: androidDetails, iOS: iosDetails);
-
-    try {
-      await _notifications.show(
-        alarm.id.hashCode,
-        '🚨 ALARM: ${alarm.label}',
-        'Anda memasuki radius ${alarm.radius} meter! Tekan untuk mematikan alarm.',
-        details,
-        payload: alarm.id, // This will trigger navigation when notification is tapped
-      );
-      print('[GeofenceService] ✅ Persistent notification shown for alarm: "${alarm.label}"');
-    } catch (e) {
-      print('[GeofenceService] ❌ Error showing notification: $e');
-    }
-
-    _startAlarmFeedback();
+  void stopAlarmFeedback() {
+     FlutterRingtonePlayer().stop();
+     Vibration.cancel();
+     FlutterLocalNotificationsPlugin().cancelAll();
+     
+     final service = FlutterBackgroundService();
+     service.invoke("stop_alarm");
   }
 
-  void _startAlarmFeedback() {
-    if (_isAlerting) return;
-    _isAlerting = true;
-
-    try {
-      FlutterRingtonePlayer().playAlarm(volume: 1.0, looping: true, asAlarm: true);
-      print('[GeofenceService] 🔊 Alarm sound started');
-    } catch (e) {
-      print('[GeofenceService] ❌ Unable to play alarm sound: $e');
-    }
-
-    Vibration.hasVibrator().then((hasVibration) {
-      if (hasVibration == true) {
-        Vibration.vibrate(pattern: [0, 600, 200, 600], repeat: 1);
-        print('[GeofenceService] 📳 Vibration pattern started');
+  Future<void> stopMonitoring() async {
+     try { await GeofenceForegroundService().stopGeofencingService(); } catch (_) {}
+     
+     stopAlarmFeedback(); // Stop feedback dulu
+     
+     final service = FlutterBackgroundService();
+     service.invoke("stop_service"); 
+     
+     isRunningNotifier.value = false;
+  }
+  
+   Future<void> checkImmediateTrigger(Alarm alarm) async {
+      try {
+      Position currentPos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      double distance = _locationService.getDistance(currentPos.latitude, currentPos.longitude, alarm.lat, alarm.lon);
+      if (distance <= alarm.radius) {
+          _triggerBackgroundAlarm(alarm);
+      } else if (distance <= (alarm.radius + kHybridBufferRadius)) {
+          final service = FlutterBackgroundService();
+          service.invoke("start_tracking");
       }
-    }).catchError((e) {
-      print('[GeofenceService] ❌ Vibration error: $e');
-    });
-
-    _alertTimer?.cancel();
-    _alertTimer = Timer(const Duration(seconds: 30), _stopAlarmFeedback);
-  }
-
-  void _stopAlarmFeedback() {
-    if (!_isAlerting) return;
-    _alertTimer?.cancel();
-    _alertTimer = null;
-
-    try {
-      FlutterRingtonePlayer().stop();
-      print('[GeofenceService] 🔇 Alarm sound stopped');
-    } catch (e) {
-      print('[GeofenceService] ❌ Error stopping alarm sound: $e');
-    }
-
-    Vibration.cancel().catchError((_) {});
-
-    // Cancel the persistent notification
-    _notifications.cancelAll();
-    print('[GeofenceService] 🔔 Alarm notification cancelled');
-
-    _isAlerting = false;
+    } catch (_) { }
   }
 }

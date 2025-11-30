@@ -5,6 +5,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 
 import '../../services/auth_service.dart';
 import '../../services/token_storage.dart';
+import '../../services/alarm_repository.dart';
 import '../home_screen.dart';
 
 class AuthGate extends StatefulWidget {
@@ -132,6 +133,7 @@ class _LoginFormState extends State<LoginForm> {
         username: _usernameController.text.trim(),
         password: _passwordController.text,
       );
+      await AlarmRepository().sync();
       if (!mounted) return;
       widget.onAuthenticated();
     } catch (e) {
@@ -256,6 +258,7 @@ class _LoginFormState extends State<LoginForm> {
         return;
       }
       await AuthService().loginWithGoogle(idToken: idToken);
+      await AlarmRepository().sync();
       if (!mounted) return;
       widget.onAuthenticated();
     } catch (e) {
